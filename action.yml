@@ -29,7 +29,7 @@ inputs:
   tool-version:
     description: Version of the NeuralGuard.Cli tool to install.
     required: false
-    default: 1.0.0
+    default: 1.0.1
   github-token:
     description: Token used to post the result as a pull request comment.
     required: false
@@ -103,8 +103,15 @@ runs:
             --repo "${{ github.repository }}"
         fi
 
+    - name: Fail when the analysis could not run
+      if: steps.scan.outputs.exit-code == '2'
+      shell: bash
+      run: |
+        echo "NeuralGuard could not complete the analysis. The error is in the scan step above."
+        exit 1
+
     - name: Fail when a vulnerability was confirmed
-      if: steps.scan.outputs.exit-code != '0'
+      if: steps.scan.outputs.exit-code == '1'
       shell: bash
       run: |
         echo "NeuralGuard confirmed at least one vulnerability in this pull request."
