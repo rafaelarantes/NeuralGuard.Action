@@ -51,3 +51,7 @@ The pretrained model files are cached between runs, so only the first run on a r
 ## Making it a required check
 
 Set `block: "true"` (the default), then add the workflow's job to the branch protection rules for your default branch. The check fails only when Claude confirms a finding, never on a false positive it dismissed.
+
+## The article series
+
+How this action was put together, step by step, is in [NeuralGuard: putting the vulnerable code detector inside the pipeline](https://devfullstack.net/blog/series-neuralguard). The two articles that cover it directly are the one about building the action and the one about commenting on the pull request and holding the merge.

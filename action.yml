@@ -29,7 +29,7 @@ inputs:
   tool-version:
     description: Version of the NeuralGuard.Cli tool to install.
     required: false
-    default: 1.0.1
+    default: 1.0.2
   github-token:
     description: Token used to post the result as a pull request comment.
     required: false
