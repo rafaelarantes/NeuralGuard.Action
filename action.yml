@@ -1,0 +1,111 @@
+name: NeuralGuard
+description: Detects vulnerable code in a pull request diff and confirms every finding with Claude before blocking the merge.
+author: Rafael Arantes
+
+branding:
+  icon: shield
+  color: purple
+
+inputs:
+  anthropic-api-key:
+    description: API key used to ask Claude for a second opinion on each finding.
+    required: true
+  claude-model:
+    description: Claude model that reviews the findings. Cheaper models cost less per pull request, stronger models dismiss more false positives. Leave empty to use the tool's default.
+    required: false
+    default: ""
+  backend:
+    description: Local classifier that raises the findings, either "codebert" or "scratch". Leave empty to use the tool's default.
+    required: false
+    default: ""
+  threshold:
+    description: Confidence between 0 and 1 above which a finding is sent to Claude. Leave empty to use the tool's default.
+    required: false
+    default: ""
+  block:
+    description: Whether a confirmed vulnerability should fail the check and block the merge. Leave empty to use the tool's default.
+    required: false
+    default: ""
+  tool-version:
+    description: Version of the NeuralGuard.Cli tool to install.
+    required: false
+    default: 1.0.0
+  github-token:
+    description: Token used to post the result as a pull request comment.
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: "10.0.x"
+
+    - name: Cache the model files
+      uses: actions/cache@v4
+      with:
+        path: ~/.neuralguard/models
+        key: neuralguard-models-v1
+
+    - name: Install NeuralGuard
+      shell: bash
+      run: dotnet tool install --global NeuralGuard.Cli --version "${{ inputs.tool-version }}"
+
+    - name: Collect the pull request diff
+      shell: bash
+      run: |
+        git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.ref }}"
+        git diff "origin/${{ github.event.pull_request.base.ref }}...HEAD" -- '*.cs' > "${RUNNER_TEMP}/pull-request.diff"
+
+    - name: Scan the diff
+      id: scan
+      shell: bash
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+      run: |
+        set +e
+        neuralguard \
+          --diff="${RUNNER_TEMP}/pull-request.diff" \
+          --backend="${{ inputs.backend }}" \
+          --claude-model="${{ inputs.claude-model }}" \
+          --threshold="${{ inputs.threshold }}" \
+          --block="${{ inputs.block }}" \
+          --output="${RUNNER_TEMP}/neuralguard.md"
+        echo "exit-code=$?" >> "$GITHUB_OUTPUT"
+
+    - name: Comment on the pull request
+      if: always()
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        if [ ! -f "${RUNNER_TEMP}/neuralguard.md" ]; then
+          echo "No report to publish."
+          exit 0
+        fi
+
+        previous=$(gh api \
+          "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+          --paginate \
+          --jq '[.[] | select(.body | contains("<!-- neuralguard -->")) | .id] | last')
+
+        if [ -n "$previous" ] && [ "$previous" != "null" ]; then
+          jq -Rs '{body: .}' < "${RUNNER_TEMP}/neuralguard.md" > "${RUNNER_TEMP}/comment.json"
+
+          gh api --method PATCH \
+            "repos/${{ github.repository }}/issues/comments/${previous}" \
+            --input "${RUNNER_TEMP}/comment.json"
+        else
+          gh pr comment "${{ github.event.pull_request.number }}" \
+            --body-file "${RUNNER_TEMP}/neuralguard.md" \
+            --repo "${{ github.repository }}"
+        fi
+
+    - name: Fail when a vulnerability was confirmed
+      if: steps.scan.outputs.exit-code != '0'
+      shell: bash
+      run: |
+        echo "NeuralGuard confirmed at least one vulnerability in this pull request."
+        exit 1
